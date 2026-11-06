@@ -21,9 +21,18 @@ def secret_section(name: str) -> dict:
     try:
         if name in st.secrets:
             return dict(st.secrets[name])
-    except Exception:  # no secrets.toml at all (e.g. on Databricks Apps)
+    except Exception:  # no secrets at all (e.g. on Databricks Apps), or invalid TOML
         pass
     return {}
+
+
+def secrets_error() -> str | None:
+    """Why secrets could not be read (missing, or a TOML syntax error), if they could not."""
+    try:
+        list(st.secrets.keys())
+        return None
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
 
 
 # ------------------------------------------------------------------ identity
@@ -73,6 +82,11 @@ def require_user() -> tuple[str, str]:
                 "(see secrets.toml.example), or for local development only set "
                 "[app] allow_unauthenticated = true."
             )
+            if secrets_error():
+                st.warning(f"The secrets could not be read, so check them for TOML mistakes: {secrets_error()}")
+            else:
+                found = [s for s in ("lakebase", "databricks", "app", "auth") if secret_section(s)]
+                st.caption(f"Secret sections found: {', '.join(found) or 'none'}")
             st.stop()
 
     st.session_state["identity"] = ident
