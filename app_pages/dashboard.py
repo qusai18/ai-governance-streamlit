@@ -3,14 +3,18 @@ import pandas as pd
 import streamlit as st
 
 from lib import rules, ui
+from lib.store import ORG_SYSTEM_ID
 
 st.title("AI governance dashboard")
 st.caption("CSA AI Controls Matrix v1.1.1 · AI-CAIQ v1.1.0 self-assessment status across your AI systems")
 
 systems = ui.systems()
+# The organization profile holds inherited answers for the ICF overlay; it is not an AI system.
+systems = systems[systems.system_id != ORG_SYSTEM_ID]
 questions = ui.questions()
 total_q = len(questions)
 all_answers = ui.answers()
+all_answers = all_answers[all_answers.system_id != ORG_SYSTEM_ID] if not all_answers.empty else all_answers
 all_findings = ui.findings()
 open_findings = all_findings[all_findings.status.isin(["Open", "In remediation"])] if not all_findings.empty else all_findings
 

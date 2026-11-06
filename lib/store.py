@@ -59,6 +59,14 @@ SYSTEM_COLUMNS = [
 FINDING_COLUMNS = ["finding_id", "system_id", "control_id", "note", "evidence", "observed_at", "source", "status"]
 ANSWER_COLUMNS = ["question_id", "answer", "ssrm_owner", "implementation", "customer_responsibility"]
 
+# ICF AI Control Overlay (NIST AI RMF 1.0 objectives, tagged by who owns them)
+OVERLAY_RESPONSIBILITY = {"O": "Organization", "S": "System", "O/S": "Shared"}
+OVERLAY_STATUSES = ["Met", "Partially met", "Not met", "Not applicable"]
+OVERLAY_COLUMNS = ["objective_id", "function", "category_id", "is_category", "objective", "responsibility",
+                   "seq", "overlay_version"]
+# The AI system that holds organization-level answers, which systems inherit
+ORG_SYSTEM_ID = "ORG"
+
 
 def _list(values: Sequence[str]) -> str:
     return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
@@ -133,6 +141,34 @@ FOR EACH ROW EXECUTE FUNCTION {q}.audit_log_immutable()""",
 FOR EACH STATEMENT EXECUTE FUNCTION {q}.audit_log_immutable()""",
         f"CREATE INDEX IF NOT EXISTS findings_system_idx ON {q}.findings(system_id)",
         f"CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON {q}.audit_log(event_ts DESC)",
+        *overlay_ddl(s),
+    ]
+
+
+def overlay_ddl(s: str) -> list[str]:
+    """Tables for the ICF AI Control Overlay; added after the first release, so also run on their own."""
+    q = f'"{s}"'
+    return [
+        f"""CREATE TABLE IF NOT EXISTS {q}.overlay_objectives (
+  objective_id TEXT PRIMARY KEY,
+  function TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  is_category BOOLEAN NOT NULL DEFAULT false,
+  objective TEXT NOT NULL,
+  responsibility TEXT NOT NULL CHECK (responsibility IN ({_list(list(OVERLAY_RESPONSIBILITY))})),
+  seq INTEGER NOT NULL,
+  overlay_version TEXT
+)""",
+        # A direct determination for one objective, recorded by an assessor. It overrides the status
+        # computed from AI-CAIQ answers, and is the only way to assess objectives with no AICM mapping.
+        f"""CREATE TABLE IF NOT EXISTS {q}.overlay_assessments (
+  system_id TEXT NOT NULL REFERENCES {q}.ai_systems(system_id) ON DELETE CASCADE,
+  objective_id TEXT NOT NULL REFERENCES {q}.overlay_objectives(objective_id),
+  status TEXT CHECK (status IS NULL OR status IN ({_list(OVERLAY_STATUSES)})),
+  notes TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_by TEXT,
+  PRIMARY KEY (system_id, objective_id)
+)""",
     ]
 
 
@@ -282,6 +318,39 @@ class Store:
                "updated_at = now(), updated_by = EXCLUDED.updated_by")
         self.executemany(sql, [{**{c: r.get(c) for c in ANSWER_COLUMNS}, "system_id": system_id,
                                 "_actor": actor} for r in rows])
+
+    # ------------------------------------------------------------ ICF AI overlay
+    def has_table(self, table: str) -> bool:
+        return bool(self.query("SELECT to_regclass(%(t)s) AS t", {"t": f"{self.schema}.{table}"}).t[0])
+
+    def ensure_overlay_schema(self) -> None:
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                for stmt in overlay_ddl(self.schema):
+                    conn.execute(stmt)
+
+    def overlay_version(self) -> str | None:
+        df = self.query(f"SELECT max(overlay_version) AS v, count(*) AS n FROM {self.s}.overlay_objectives")
+        return f"{df.v[0]}:{int(df.n[0])}" if int(df.n[0]) else None
+
+    def load_overlay(self, rows: list[dict]) -> None:
+        self.executemany(self._upsert_sql("overlay_objectives", OVERLAY_COLUMNS, ["objective_id"], stamp=False),
+                         [{c: r.get(c) for c in OVERLAY_COLUMNS} for r in rows])
+
+    def overlay_objectives(self) -> pd.DataFrame:
+        return self.query(f"SELECT * FROM {self.s}.overlay_objectives ORDER BY seq")
+
+    def overlay_assessments(self, system_ids: Sequence[str]) -> pd.DataFrame:
+        return self.query(f"SELECT * FROM {self.s}.overlay_assessments WHERE system_id = ANY(%(ids)s)",
+                          {"ids": list(system_ids)})
+
+    def save_overlay_assessments(self, system_id: str, rows: list[dict], actor: str) -> None:
+        sql = (f"INSERT INTO {self.s}.overlay_assessments (system_id, objective_id, status, notes, updated_by) "
+               "VALUES (%(system_id)s, %(objective_id)s, %(status)s, %(notes)s, %(_actor)s) "
+               "ON CONFLICT (system_id, objective_id) DO UPDATE SET status = EXCLUDED.status, "
+               "notes = EXCLUDED.notes, updated_at = now(), updated_by = EXCLUDED.updated_by")
+        self.executemany(sql, [{"system_id": system_id, "objective_id": r["objective_id"], "status": r.get("status"),
+                                "notes": r.get("notes"), "_actor": actor} for r in rows])
 
 
 def new_id(prefix: str) -> str:

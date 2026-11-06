@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from lib import overlay
 from lib.aicm_parse import parse_aicm, parse_caiq
 from lib.connection import Settings, make_pool, running_as_databricks_app
 from lib.store import Store
@@ -117,9 +118,15 @@ def store() -> Store:
 
 def _bootstrap(s: Store) -> None:
     """Create tables on first start and seed the AICM / AI-CAIQ reference data if empty."""
-    has_tables = s.query("SELECT to_regclass(%(t)s) AS t", {"t": f"{s.schema}.audit_log"}).t[0]
-    if not has_tables:
+    if not s.has_table("audit_log"):
         s.ensure_schema()
+    if not s.has_table("overlay_objectives"):
+        # Tables added after the first release. Only the schema owner (the Databricks App's service
+        # principal) can create them; other deployments wait until the Databricks App has started once.
+        try:
+            s.ensure_overlay_schema()
+        except Exception:
+            pass
     # Extra Postgres roles (e.g. the service principal a Streamlit Cloud copy uses) that should get
     # read/write access. Only the schema owner can grant, so this is set on the Databricks App.
     for role in filter(None, (r.strip() for r in os.environ.get("AIGOV_GRANT_ROLES", "").split(","))):
@@ -131,6 +138,12 @@ def _bootstrap(s: Store) -> None:
         s.load_reference_data(c, q)
         s.audit("system:bootstrap", "app", "reference.load", "aicm_controls", None,
                 f"{len(c)} controls (AICM {c[0]['aicm_version']}), {len(q)} questions")
+    if s.has_table("overlay_objectives"):
+        rows = overlay.load_csv()
+        if s.overlay_version() != f"{overlay.OVERLAY_VERSION}:{len(rows)}":
+            s.load_overlay(rows)
+            s.audit("system:bootstrap", "app", "reference.load", "overlay_objectives", None,
+                    f"{len(rows)} rows from {overlay.CSV_PATH.name} ({overlay.OVERLAY_VERSION})")
 
 
 # ------------------------------------------------------------------ cached reads
@@ -159,11 +172,40 @@ def answers(system_id: str | None = None) -> pd.DataFrame:
     return store().answers(system_id)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def overlay_objectives() -> pd.DataFrame:
+    return store().overlay_objectives()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def overlay_assessments(system_ids: tuple[str, ...]) -> pd.DataFrame:
+    return store().overlay_assessments(system_ids)
+
+
 def refresh() -> None:
     """Drop cached inventory, findings and answers after a write."""
     systems.clear()
     findings.clear()
     answers.clear()
+    overlay_assessments.clear()
+
+
+def _cell(v):
+    """None for an empty cell, whatever pandas made of it (None, NaN, NA or blank text)."""
+    if isinstance(v, str):
+        return v.strip() or None
+    return None if v is None or pd.isna(v) else v
+
+
+def changed_rows(before: pd.DataFrame, after: pd.DataFrame, cols: list[str]) -> list[tuple[int, dict]]:
+    """(position, new values) for each row st.data_editor changed in `cols`.
+
+    Compared cell by cell in plain Python: an all-empty column and a partly filled one come back from
+    the editor with different null types, so a vectorised comparison flags every row after one edit.
+    """
+    b = [{c: _cell(v) for c, v in r.items()} for r in before[cols].to_dict("records")]
+    a = [{c: _cell(v) for c, v in r.items()} for r in after[cols].to_dict("records")]
+    return [(i, new) for i, (old, new) in enumerate(zip(b, a)) if old != new]
 
 
 def system_picker(label: str = "AI system", key: str = "system") -> pd.Series | None:

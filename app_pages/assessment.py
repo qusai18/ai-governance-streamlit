@@ -111,27 +111,20 @@ edited = st.data_editor(
 )
 
 
-def _norm(df: pd.DataFrame) -> pd.DataFrame:
-    return df[EDIT_COLS].astype("object").where(df[EDIT_COLS].notna(), None).apply(
-        lambda col: col.map(lambda v: v.strip() or None if isinstance(v, str) else v))
-
-
-before, after = _norm(shown), _norm(edited)
-changed_mask = (before.fillna("\0") != after.fillna("\0")).any(axis=1)
-changes = edited[changed_mask]
+changes = ui.changed_rows(shown, edited, EDIT_COLS)
 
 s1, s2 = st.columns([1, 3])
-if s1.button(f"Save changes ({len(changes)})", type="primary", disabled=changes.empty):
-    rows = [{"question_id": r.question_id, **after.loc[i].to_dict()} for i, r in changes.iterrows()]
+if s1.button(f"Save changes ({len(changes)})", type="primary", disabled=not changes):
+    rows = [{"question_id": shown.question_id.iloc[i], **vals} for i, vals in changes]
     ui.store().save_answers(sid, rows, ui.actor())
     ui.audit("caiq.answers.save", "caiq_answers", sid,
              f"{len(rows)} answer(s): " + ", ".join(r["question_id"] for r in rows[:50]))
     ui.refresh()
     st.toast(f"Saved {len(rows)} answer(s)")
     st.rerun()
-if not changes.empty:
-    issues = sum(len([i for i in rules.check_answer(r.answer, r.ssrm_owner, r.implementation) if i[0] == "error"])
-                 for r in after[changed_mask].itertuples())
+if changes:
+    issues = sum(len([i for i in rules.check_answer(v["answer"], v["ssrm_owner"], v["implementation"]) if i[0] == "error"])
+                 for _, v in changes)
     s2.caption(f"Unsaved edits to {len(changes)} question(s)" + (f", {issues} STAR blocker(s) among them." if issues else "."))
 
 # ---------------------------------------------------------------- guidance

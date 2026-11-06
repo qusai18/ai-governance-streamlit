@@ -25,6 +25,7 @@ pages = st.navigation(
         "Govern": [
             st.Page("app_pages/inventory.py", title="AI systems", icon="🗂️"),
             st.Page("app_pages/assessment.py", title="AI-CAIQ assessment", icon="📝"),
+            st.Page("app_pages/overlay.py", title="ICF AI overlay", icon="🏛️"),
             st.Page("app_pages/export.py", title="STAR export", icon="📤"),
         ],
         "Guardrails": [
