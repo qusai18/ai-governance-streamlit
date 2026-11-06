@@ -27,6 +27,9 @@ pages = st.navigation(
             st.Page("app_pages/assessment.py", title="AI-CAIQ assessment", icon="📝"),
             st.Page("app_pages/export.py", title="STAR export", icon="📤"),
         ],
+        "Guardrails": [
+            st.Page("app_pages/action_gate.py", title="Agent action gate", icon="🚦"),
+        ],
         "Reference": [
             st.Page("app_pages/controls.py", title="AICM controls", icon="📚"),
             st.Page("app_pages/audit.py", title="Audit log", icon="🧾"),
