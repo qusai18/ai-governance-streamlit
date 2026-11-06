@@ -1,0 +1,57 @@
+bundle:
+  name: ai-governance-streamlit
+
+variables:
+  app_name:
+    description: "App name: lowercase letters, digits and hyphens; at most 30 characters"
+    default: ai-governance
+  lakebase_branch:
+    description: Lakebase branch resource name
+    default: projects/ai-governance/branches/production
+  lakebase_database:
+    description: Lakebase database resource name
+    default: projects/ai-governance/branches/production/databases/databricks-postgres
+
+sync:
+  exclude:
+    - .venv
+    - .streamlit/secrets.toml
+    - scripts
+    - "data/*.json"
+
+resources:
+  apps:
+    ai_governance:
+      name: ${var.app_name}
+      description: "AI governance platform: CSA AICM controls, AI-CAIQ self-assessment and STAR for AI export"
+      source_code_path: .
+      config:
+        # Port and address come from STREAMLIT_SERVER_PORT / STREAMLIT_SERVER_ADDRESS,
+        # which Databricks Apps sets; the command is not run through a shell.
+        command:
+          - streamlit
+          - run
+          - app.py
+        env:
+          - name: STREAMLIT_SERVER_ENABLE_CORS
+            value: "false"
+          - name: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
+            value: "false"
+          - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+            value: "false"
+          - name: LAKEBASE_ENDPOINT
+            value_from: postgres
+          - name: AIGOV_SCHEMA
+            value: "aigov"
+      resources:
+        - name: postgres
+          postgres:
+            branch: ${var.lakebase_branch}
+            database: ${var.lakebase_database}
+            permission: CAN_CONNECT_AND_CREATE
+
+targets:
+  dev:
+    default: true
+    workspace:
+      host: https://dbc-119bd90e-bff1.cloud.databricks.com
