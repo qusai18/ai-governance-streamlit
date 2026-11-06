@@ -43,6 +43,9 @@ resources:
             value_from: postgres
           - name: AIGOV_SCHEMA
             value: "aigov"
+          # Service principal "ai-governance-streamlit-cloud" (Streamlit Cloud copy)
+          - name: AIGOV_GRANT_ROLES
+            value: "e8e45679-37ee-4b25-a0df-f38932634195"
       resources:
         - name: postgres
           postgres:

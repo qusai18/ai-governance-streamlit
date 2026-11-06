@@ -17,3 +17,7 @@ env:
     valueFrom: postgres
   - name: AIGOV_SCHEMA
     value: "aigov"
+  # Postgres roles the app grants read/write on the schema at startup (comma-separated).
+  # e8e45679-...: service principal "ai-governance-streamlit-cloud" used by the Streamlit Cloud copy.
+  - name: AIGOV_GRANT_ROLES
+    value: "e8e45679-37ee-4b25-a0df-f38932634195"
