@@ -98,8 +98,9 @@ class TokenSource:
 
     def _identity(self) -> str:
         # Service principals log in to Postgres with their application (client) ID.
-        if self.settings.client_id:
-            return self.settings.client_id
+        client_id = self.settings.client_id or self.client.config.client_id
+        if client_id:
+            return client_id
         # For a user this is their email; for a service principal SCIM returns the application ID.
         return self.client.current_user.me().user_name
 
